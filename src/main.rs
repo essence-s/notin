@@ -7,7 +7,13 @@ use slint::ComponentHandle;
 mod audio;
 mod recorder;
 
+mod store;
+
+mod engine;
+
+use chrono::Local;
 use recorder::Recorder;
+use store::{append_note, move_wav_to_audio_folder};
 
 /// Una sesión de grabación en vivo: mientras existe, el micro está
 /// alimentando el sumidero. Se suelta para parar y guardar.
@@ -48,9 +54,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let recorded = samples.lock().expect("el hilo de captura rompió el sumidero");
                     let mut locution = Recorder::new(documents_dir.clone(), sample_rate);
                     locution.record(&recorded);
-                    match locution.stop() {
-                        Ok(path) => println!("guardado: {}", path.display()),
-                        Err(err) => eprintln!("error al guardar: {err}"),
+                    let wav_path = match locution.stop() {
+                        Ok(path) => path,
+                        Err(err) => {
+                            eprintln!("error al guardar el wav: {err}");
+                            return;
+                        }
+                    };
+
+                    // Fecha y hora para el nombre del día y la línea del markdown.
+                    let now = Local::now();
+                    let date = now.format("%Y-%m-%d").to_string();
+                    let time = now.format("%H:%M:%S").to_string();
+
+                    // Mover el wav a audio/ y obtener la ruta relativa para el enlace.
+                    let audio_rel = match move_wav_to_audio_folder(&documents_dir, &wav_path) {
+                        Ok(rel) => rel,
+                        Err(err) => {
+                            eprintln!("error al mover el wav a audio/: {err}");
+                            return;
+                        }
+                    };
+
+                    // Intentar transcribir; si falta el modelo, se ve un mensaje
+                    // claro y no crashea (historia #2, criterio 3).
+                    let model_path = documents_dir.join("modelo.onnx"); // provisional hasta #4
+                    let texto = match engine::transcribe(&model_path, &[]) {
+                        Ok(t) => t,
+                        Err(err) => {
+                            eprintln!("{err}");
+                            format!("[sin modelo: {err}]")
+                        }
+                    };
+
+                    if let Err(err) = append_note(&documents_dir, &date, &time, &texto, &audio_rel) {
+                        eprintln!("error al escribir la nota: {err}");
                     }
                 }
                 // En reposo: empezar a grabar.
@@ -73,8 +111,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Sonido y ventana: un hilo para cada cosa.
     // Toda locución nace y muere en el botón.
-    // Y al pararlo, lo hablado va a un WAV.
-    // Vale — sin nada más que decir.
+    // Y al pararlo, lo hablado va a un WAV, luego a audio/ y al Markdown del día.
     Ok(window.run()?)
 }
 
