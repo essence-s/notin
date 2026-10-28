@@ -65,3 +65,15 @@ pub fn start_capture(sink: Arc<Mutex<Vec<i16>>>) -> Result<Capture, CaptureError
     stream.play()?;
     Ok(Capture { stream, sample_rate })
 }
+
+/// Lee un WAV y devuelve las muestras como f32 en [-1.0, 1.0].
+pub fn read_wav(path: &std::path::Path) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+    let file = std::fs::File::open(path)?;
+    let mut reader = hound::WavReader::new(file)?;
+    let mut samples = Vec::with_capacity(reader.len() as usize);
+    for sample in reader.samples::<i16>() {
+        let s = sample?;
+        samples.push(s as f32 / i16::MAX as f32);
+    }
+    Ok(samples)
+}

@@ -13,6 +13,12 @@ hound = "3"
 # que slint trae por defecto (nada de eso necesita la historia #1).
 slint = { version = "1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg"] }
 thiserror = "2.0.21"
+rubato = "5"
+sherpa-rs = { version = "0.6.8", default-features = false, features = ["download-binaries", "sys"] }
+ureq = "3"
+clap = { version = "4", features = ["derive"] }
+bzip2 = "0.5"
+tar = "0.4"
 
 [build-dependencies]
 slint-build = "1.18.1"

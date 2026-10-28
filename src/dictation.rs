@@ -10,13 +10,16 @@ use crate::AppWindow;
 use crate::audio;
 use crate::engine;
 use crate::recorder::Recorder;
+use crate::resample::Resampler;
 use crate::store::{append_note, move_wav_to_audio_folder};
-use crate::vad::{SilenceWatcher, is_speech};
+use crate::vad::{SilenceWatcher, VadDetector};
 
 /// Silencio que cierra la locución. Configurable en la historia #6.
 const SILENCE_MS: u64 = 1_200;
 /// Trozo que se le da al VAD: sólo cambia la granularidad del corte.
 const VAD_CHUNK_MS: u64 = 30;
+/// Rate al que opera el VAD Silero y el motor (16 kHz).
+const TARGET_RATE: u32 = 16_000;
 
 /// Una sesión de grabación en vivo: mientras existe, el micro alimenta el
 /// sumidero. El `stop` es de esta sesión: el watcher lo mira para no seguir
@@ -45,9 +48,6 @@ impl Dictation {
 
     /// Alterna entre grabar y parar, venga del botón o de un futuro atajo.
     pub fn toggle(&self) {
-        // Si la ventana dice "grabando", el clic es para parar. Cuando el
-        // watcher acaba de cortar, el `take` puede venir vacío: no hay que
-        // arrancar otra grabación sin querer.
         let was_recording = self
             .weak
             .upgrade()
@@ -93,6 +93,8 @@ impl Dictation {
 
 /// Vigila el audio nuevo sin quitarlo del sumidero: la locución completa se
 /// guarda al parar. Sólo cuenta silencio después de haber oído voz.
+/// El audio del micrófono (cualquier rate) se resamplea a 16 kHz antes de
+/// alimentar el VAD Silero.
 fn spawn_silence_watcher(
     samples: Arc<Mutex<Vec<i16>>>,
     sample_rate: u32,
@@ -101,12 +103,27 @@ fn spawn_silence_watcher(
     documents_dir: PathBuf,
     weak: slint::Weak<AppWindow>,
 ) {
-    let silence_limit = (sample_rate as u64 * SILENCE_MS / 1_000) as usize;
-    let window_samples = ((sample_rate as u64 * VAD_CHUNK_MS / 1_000) as usize).max(1);
+    let silence_limit = (TARGET_RATE as u64 * SILENCE_MS / 1_000) as usize;
+    let window_samples = ((TARGET_RATE as u64 * VAD_CHUNK_MS / 1_000) as usize).max(1);
+    let silero_path = documents_dir.join("models/silero_vad/silero_vad.onnx");
 
     thread::spawn(move || {
         let mut watcher = SilenceWatcher::new(silence_limit);
         let mut processed = 0usize;
+        let mut resampler = match Resampler::new(sample_rate, TARGET_RATE) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("no se pudo crear el resampleador: {e}");
+                return;
+            }
+        };
+        let mut vad = match VadDetector::new(&silero_path) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("no se pudo crear el VAD Silero: {e}");
+                return;
+            }
+        };
 
         loop {
             if stop.load(Ordering::SeqCst) {
@@ -117,8 +134,7 @@ fn spawn_silence_watcher(
                 return;
             }
 
-            // Copia sólo lo nuevo y deja el buffer intacto para el WAV.
-            let pending = {
+            let pending_i16 = {
                 let guard = samples.lock().unwrap();
                 if guard.len() <= processed {
                     continue;
@@ -128,10 +144,23 @@ fn spawn_silence_watcher(
                 pending
             };
 
-            for piece in pending.chunks(window_samples) {
-                watcher.feed(is_speech(piece), piece.len());
+            let pending_f32: Vec<f32> = pending_i16
+                .iter()
+                .map(|&s| s as f32 / i16::MAX as f32)
+                .collect();
+
+            let resampled = match resampler.process(&pending_f32) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("error de resampleo: {e}");
+                    return;
+                }
+            };
+
+            for piece in resampled.chunks(window_samples) {
+                let has_speech = vad.is_speech(piece);
+                watcher.feed(has_speech, piece.len());
                 if watcher.should_stop() {
-                    // Un único `take` decide quién guarda: el botón o esto.
                     let stopped = session.lock().unwrap().take();
                     if let Some(session) = stopped {
                         finish_session(session, &documents_dir, &weak);
@@ -174,17 +203,40 @@ fn save_locution(
     let time = now.format("%H:%M:%S").to_string();
     let audio_rel = move_wav_to_audio_folder(documents_dir, &wav_path)?;
 
-    // El motor real llega con la historia #4; hasta entonces se avisa.
-    let model_path = documents_dir.join("modelo.onnx");
-    let texto = match engine::transcribe(&model_path, &[]) {
+    let model_path = documents_dir.join("models/nemo-ctc-es/model.int8.onnx");
+    let texto = resamplear_y_transcribir(samples, sample_rate, &model_path);
+
+    append_note(documents_dir, &date, &time, &texto, &audio_rel)
+}
+
+/// Resamplea las muestras capturadas a 16 kHz y las transcribe con el motor.
+fn resamplear_y_transcribir(
+    samples: &[i16],
+    sample_rate: u32,
+    model_path: &Path,
+) -> String {
+    let f32: Vec<f32> = samples
+        .iter()
+        .map(|&s| s as f32 / i16::MAX as f32)
+        .collect();
+
+    let mut resampler = match Resampler::new(sample_rate, TARGET_RATE) {
+        Ok(r) => r,
+        Err(e) => return format!("[sin resampleo: {e}]"),
+    };
+
+    let resampled = match resampler.process(&f32) {
+        Ok(r) => r,
+        Err(e) => return format!("[sin resampleo: {e}]"),
+    };
+
+    match engine::transcribe(model_path, &resampled) {
         Ok(texto) => texto,
         Err(err) => {
             eprintln!("{err}");
             format!("[sin modelo: {err}]")
         }
-    };
-
-    append_note(documents_dir, &date, &time, &texto, &audio_rel)
+    }
 }
 
 /// Cambia el estado visible de la ventana desde cualquier hilo.
@@ -209,15 +261,11 @@ mod locution_tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("crea carpeta temporal");
 
-        // 1,02 s de voz fingida (34 trozos de 30 ms) y 1,2 s de silencio a
-        // 16 kHz: lo que queda después del corte también tiene que estar en
-        // el WAV.
         let mut samples: Vec<i16> = (0..16_320)
             .map(|i| if i % 2 == 0 { 4_000 } else { -4_000 })
             .collect();
         samples.extend(vec![0i16; 19_200]);
 
-        // Mismo criterio que el watcher: 480 muestras por trozo (30 ms).
         let mut watcher = SilenceWatcher::new(19_200);
         let mut stopped = false;
         for piece in samples.chunks(480) {
