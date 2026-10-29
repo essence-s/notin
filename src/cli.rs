@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::audio;
 use crate::engine;
@@ -22,7 +22,14 @@ pub enum Cmd {
         archivo: std::path::PathBuf,
     },
     /// Abre la ventana flotante secundaria para dictar.
-    Dictado,
+    Dictado { cmd: Option<DictadoCmd> },
+}
+
+/// Subcomandos de `notin dictado`.
+#[derive(Subcommand, Debug, Clone, PartialEq, ValueEnum)]
+pub(crate) enum DictadoCmd {
+    /// Alterna la visibilidad de la ventana flotante de dictado.
+    Toggle,
 }
 
 /// Ejecuta `notin models`: descarga Nemo CTC + Silero VAD al directorio de modelos.
@@ -50,9 +57,15 @@ mod cli_tests {
     use super::*;
 
     #[test]
-    fn cli_parse_dictado_flag() {
+    fn cli_parse_dictado_toggle() {
+        let cli = Cli::try_parse_from(["notin", "dictado", "toggle"]).expect("parses dictado toggle");
+        assert!(matches!(cli.cmd, Some(Cmd::Dictado { cmd: Some(DictadoCmd::Toggle) })));
+    }
+
+    #[test]
+    fn cli_parse_dictado_no_toggle() {
         let cli = Cli::try_parse_from(["notin", "dictado"]).expect("parses dictado");
-        assert!(matches!(cli.cmd, Some(Cmd::Dictado)));
+        assert!(matches!(cli.cmd, Some(Cmd::Dictado { cmd: None })));
     }
 
     #[test]

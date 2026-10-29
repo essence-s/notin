@@ -7,6 +7,7 @@ mod audio;
 mod cli;
 mod dictation;
 mod engine;
+mod ipc;
 mod models;
 mod recorder;
 mod resample;
@@ -27,26 +28,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.cmd {
         Some(Cmd::Models) => cli::run_models(&documents_dir),
         Some(Cmd::Transcribe { archivo }) => cli::run_transcribe(&documents_dir, &archivo),
-        Some(Cmd::Dictado) => run_dictado(documents_dir),
+        Some(Cmd::Dictado { .. }) => run_dictado(documents_dir),
         None => run_gui(documents_dir),
     }
 }
 
 /// Lanza la ventana flotante secundaria (por CLI o desde la configuración).
 fn run_dictado(documents_dir: std::path::PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let window = DictadoWindow::new()?;
-    let dictation = Rc::new(Dictation::new(documents_dir, window.as_weak()));
-
-    window.on_toggle({
-        let dictation = Rc::clone(&dictation);
-        move || dictation.toggle()
-    });
-
-    // Sonido y ventana: un hilo para cada cosa.
-    // Toda locución nace y muere en el botón.
-    // y al pararlo, lo hablado 
-    // va a un WAV.
-    Ok(window.run()?)
+    match ipc::acquire_lock(&documents_dir) {
+        Ok(_lock) => {
+            // No hay instancia previa: iniciar app con ventana flotante.
+            let window = DictadoWindow::new()?;
+            let dictation = Rc::new(Dictation::new(documents_dir, window.as_weak()));
+            window.on_toggle({
+                let dictation = Rc::clone(&dictation);
+                move || dictation.toggle()
+            });
+            Ok(window.run()?)
+        }
+        Err(_) => {
+            // Ya hay instancia: pedirle que alterne la ventana flotante.
+            ipc::toggle_signal(&documents_dir)?;
+            Ok(())
+        }
+        // Sonido y ventana: un hilo para cada cosa.
+        // Toda locución nace y muere en el botón.
+        // y al pararlo, lo hablado 
+        // va a un WAV.
+    }
 }
 
 /// Lanza la ventana principal de configuración.
