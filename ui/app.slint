@@ -1,0 +1,125 @@
+export component ConfigWindow inherits Window {
+    title: "notin";
+
+    in-out property <bool> models_installed: false;
+    in-out property <string> model_path: "";
+
+    callback download_models();
+    callback open_float_window();
+
+    Rectangle {
+        background: #1d2021;
+        width: parent.width;
+        height: parent.height;
+
+        Rectangle {
+            background: #2a2a2a;
+            x: 40px;
+            y: 20px;
+            width: 320px;
+            height: 220px;
+            border-radius: 12px;
+
+            Text {
+                text: "Configuración de notin";
+                color: #ffffff;
+                font-size: 18px;
+                horizontal-alignment: center;
+                y: 18px;
+                width: parent.width;
+            }
+
+            Text {
+                text: root.models_installed ? "Modelo instalado: Nemo CTC (español)" : "Modelo no instalado";
+                color: #ffffff;
+                font-size: 14px;
+                horizontal-alignment: center;
+                y: 48px;
+                width: parent.width;
+            }
+
+            Text {
+                text: root.model_path;
+                color: #aaaaaa;
+                font-size: 11px;
+                horizontal-alignment: center;
+                y: 68px;
+                width: parent.width;
+            }
+
+            Rectangle {
+                background: root.models_installed ? #555555 : #c0392b;
+                x: 20px;
+                y: 100px;
+                width: 280px;
+                height: 32px;
+                border-radius: 8px;
+
+                TouchArea {
+                    clicked => { root.download_models(); }
+                }
+
+                Text {
+                    text: root.models_installed ? "Modelo instalado" : "Descargar modelo";
+                    color: #ffffff;
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: parent.width;
+                    height: parent.height;
+                }
+            }
+
+            Rectangle {
+                background: #4a4a4a;
+                x: 20px;
+                y: 138px;
+                width: 280px;
+                height: 32px;
+                border-radius: 8px;
+
+                TouchArea {
+                    clicked => { root.open_float_window(); }
+                }
+
+                Text {
+                    text: "Abrir ventana flotante";
+                    color: #ffffff;
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: parent.width;
+                    height: parent.height;
+                }
+            }
+        }
+    }
+}
+
+export component FloatWindow inherits Window {
+    title: "notin - dictado";
+    width: 200px;
+    height: 72px;
+
+    in-out property <bool> recording: false;
+    callback toggle();
+
+    Rectangle {
+        border-radius: 14px;
+        background: root.recording ? #c0392b : #1d2021;
+
+        Text {
+            width: 100%;
+            height: 100%;
+            text: root.recording ? "● grabando" : "notin";
+            color: #ffffff;
+            font-size: root.recording ? 14px : 18px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => { root.toggle(); }
+        }
+    }
+}

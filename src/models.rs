@@ -127,7 +127,15 @@ fn busca(dir: &Path, nombre: &str) -> Option<PathBuf> {
     None
 }
 
-/// Necesitas `bzip2` y `tar` para extraer los modelos.
+/// Devuelve true si el modelo Nemo CTC y el VAD Silero están instalados.
+pub fn model_installed(dir: &Path) -> bool {
+    let nemo_dir = dir.join("nemo-ctc-es");
+    let silero_path = dir.join("silero_vad").join(SILERO_FILE);
+    nemo_dir.join("model.int8.onnx").exists()
+        && nemo_dir.join("tokens.txt").exists()
+        && silero_path.exists()
+}
+
 #[cfg(test)]
 mod models_tests {
     use super::*;
@@ -153,6 +161,32 @@ mod models_tests {
         fs::create_dir_all(&dir).expect("crea carpeta");
 
         assert!(busca(&dir, "no_existe.onnx").is_none(), "no encuentra fichero que no existe");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn models_model_installed_detects_installed() {
+        let dir = std::env::temp_dir().join("notin_test_model_installed");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("nemo-ctc-es")).expect("crea carpeta nemo");
+        fs::create_dir_all(dir.join("silero_vad")).expect("crea carpeta silero");
+        fs::write(dir.join("nemo-ctc-es/model.int8.onnx"), b"x").expect("escribe modelo");
+        fs::write(dir.join("nemo-ctc-es/tokens.txt"), b"x").expect("escribe tokens");
+        fs::write(dir.join("silero_vad/silero_vad.onnx"), b"x").expect("escribe vad");
+
+        assert!(model_installed(&dir), "detecta modelo instalado");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn models_model_installed_detects_not_installed() {
+        let dir = std::env::temp_dir().join("notin_test_model_not_installed");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("crea carpeta vacía");
+
+        assert!(!model_installed(&dir), "no detecta modelo si falta");
 
         let _ = fs::remove_dir_all(&dir);
     }

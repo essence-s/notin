@@ -12,7 +12,7 @@ pub struct Cli {
     pub cmd: Option<Cmd>,
 }
 
-#[derive(Subcommand, Debug, Clone)]
+#[derive(Subcommand, Debug, Clone, PartialEq)]
 pub enum Cmd {
     /// Descarga los modelos offline (Nemo CTC + VAD Silero).
     Models,
@@ -21,6 +21,8 @@ pub enum Cmd {
         /// Ruta del fichero WAV.
         archivo: std::path::PathBuf,
     },
+    /// Abre la ventana flotante secundaria para dictar.
+    Float,
 }
 
 /// Ejecuta `notin models`: descarga Nemo CTC + Silero VAD al directorio de modelos.
@@ -41,4 +43,21 @@ pub fn run_transcribe(
     let texto = engine::transcribe(&model_path, &samples)?;
     println!("{}", texto.trim());
     Ok(())
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn cli_parse_float_flag() {
+        let cli = Cli::try_parse_from(["notin", "float"]).expect("parses float");
+        assert!(matches!(cli.cmd, Some(Cmd::Float)));
+    }
+
+    #[test]
+    fn cli_parse_no_args_defaults_to_none() {
+        let cli = Cli::try_parse_from(["notin"]).expect("parses no args");
+        assert_eq!(cli.cmd, None);
+    }
 }

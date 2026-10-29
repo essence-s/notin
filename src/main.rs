@@ -27,18 +27,70 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.cmd {
         Some(Cmd::Models) => cli::run_models(&documents_dir),
         Some(Cmd::Transcribe { archivo }) => cli::run_transcribe(&documents_dir, &archivo),
+        Some(Cmd::Float) => run_float(documents_dir),
         None => run_gui(documents_dir),
     }
 }
 
-/// Lanza la GUI (ventana flotante con botón).
-fn run_gui(documents_dir: std::path::PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let window = AppWindow::new()?;
+/// Lanza la ventana flotante secundaria (por CLI o desde la configuración).
+fn run_float(documents_dir: std::path::PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let window = FloatWindow::new()?;
     let dictation = Rc::new(Dictation::new(documents_dir, window.as_weak()));
 
     window.on_toggle({
         let dictation = Rc::clone(&dictation);
         move || dictation.toggle()
+    });
+
+    Ok(window.run()?)
+}
+
+/// Lanza la ventana principal de configuración.
+fn run_gui(documents_dir: std::path::PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let window = ConfigWindow::new()?;
+
+    let model_dir = documents_dir.join("models");
+    let model_path = model_dir.to_string_lossy().into_owned();
+
+    window.set_model_path(model_path.into());
+    window.set_models_installed(models::model_installed(&model_dir));
+
+    let window_weak = window.as_weak();
+
+    window.on_download_models({
+        let model_dir = model_dir.clone();
+        let window_weak = window_weak.clone();
+        move || {
+            let window_weak = window_weak.clone();
+            let model_dir = model_dir.clone();
+            std::thread::spawn(move || {
+                match models::download_models(&model_dir) {
+                    Ok(()) => {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(window) = window_weak.upgrade() {
+                                window.set_models_installed(true);
+                            }
+                        });
+                    }
+                    Err(err) => {
+                        eprintln!("error al descargar modelos: {err}");
+                    }
+                }
+            });
+        }
+    });
+
+    window.on_open_float_window({
+        let documents_dir = documents_dir.clone();
+        move || {
+            let float_window = FloatWindow::new().expect("crea ventana flotante");
+            let dictation = Rc::new(Dictation::new(documents_dir.clone(), float_window.as_weak()));
+            float_window.on_toggle({
+                let dictation = Rc::clone(&dictation);
+                move || dictation.toggle()
+            });
+            float_window.show().expect("muestra ventana flotante");
+        }
     });
 
     Ok(window.run()?)
