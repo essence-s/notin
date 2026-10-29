@@ -1,5 +1,6 @@
 // Dado un trozo de audio con voz y otro con silencio, devuelve la
 // clasificación correcta.
+#[allow(dead_code)]
 pub fn is_speech(samples: &[i16]) -> bool {
     // Umbral de energía: si alguna muestra supera el umbral, hay voz.
     samples.iter().any(|&s| s.abs() > 1000)
