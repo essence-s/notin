@@ -22,7 +22,7 @@ pub enum Cmd {
         archivo: std::path::PathBuf,
     },
     /// Abre la ventana flotante secundaria para dictar.
-    Float,
+    Dictado,
 }
 
 /// Ejecuta `notin models`: descarga Nemo CTC + Silero VAD al directorio de modelos.
@@ -50,9 +50,9 @@ mod cli_tests {
     use super::*;
 
     #[test]
-    fn cli_parse_float_flag() {
-        let cli = Cli::try_parse_from(["notin", "float"]).expect("parses float");
-        assert!(matches!(cli.cmd, Some(Cmd::Float)));
+    fn cli_parse_dictado_flag() {
+        let cli = Cli::try_parse_from(["notin", "dictado"]).expect("parses dictado");
+        assert!(matches!(cli.cmd, Some(Cmd::Dictado)));
     }
 
     #[test]
