@@ -1,4 +1,7 @@
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
 use clap::Parser;
 use slint::ComponentHandle;
@@ -35,31 +38,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Lanza la ventana flotante secundaria (por CLI o desde la configuración).
 fn run_dictado(documents_dir: std::path::PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    match ipc::acquire_lock(&documents_dir) {
-        Ok(_lock) => {
-            // No hay instancia previa: iniciar app con ventana flotante.
-            let window = DictadoWindow::new()?;
-            let dictation = Rc::new(Dictation::new(documents_dir, window.as_weak()));
-            window.on_toggle({
-                let dictation = Rc::clone(&dictation);
-                move || dictation.toggle()
-            });
-            Ok(window.run()?)
+    let _lock = ipc::acquire_lock(&documents_dir)?;
+
+    let window = DictadoWindow::new()?;
+    let dictation = Rc::new(Dictation::new(documents_dir.clone(), window.as_weak()));
+    window.on_toggle({
+        let dictation = Rc::clone(&dictation);
+        move || dictation.toggle()
+    });
+
+    let visible = Arc::new(AtomicBool::new(true));
+    let visible_clone = visible.clone();
+    let window_weak = window.as_weak();
+    let signal_dir = documents_dir.clone();
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_millis(200));
+            if window_weak.upgrade().is_none() {
+                break;
+            }
+            if ipc::consume_toggle_signal(&signal_dir) {
+                let visible = visible_clone.clone();
+                let window_weak = window_weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(window) = window_weak.upgrade() {
+                        if visible.load(Ordering::SeqCst) {
+                            let _ = window.hide();
+                            visible.store(false, Ordering::SeqCst);
+                        } else {
+                            let _ = window.show();
+                            visible.store(true, Ordering::SeqCst);
+                        }
+                    }
+                });
+            }
         }
-        Err(_) => {
-            // Ya hay instancia: pedirle que alterne la ventana flotante.
-            ipc::toggle_signal(&documents_dir)?;
-            Ok(())
-        }
-        // Sonido y ventana: un hilo para cada cosa.
-        // Toda locución nace y muere en el botón.
-        // y al pararlo, lo hablado 
-        // va a un WAV.
-    }
+    });
+
+    Ok(window.run()?)
 }
 
 /// Lanza la ventana principal de configuración.
 fn run_gui(documents_dir: std::path::PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let _lock = ipc::acquire_lock(&documents_dir)?;
+
     let window = NotinWindow::new()?;
 
     let model_dir = documents_dir.join("models");
@@ -69,6 +91,43 @@ fn run_gui(documents_dir: std::path::PathBuf) -> Result<(), Box<dyn std::error::
     window.set_models_installed(models::model_installed(&model_dir));
 
     let window_weak = window.as_weak();
+
+    // Crear DictadoWindow oculto inicialmente para el monitoreo de señal
+    let dictado_window = DictadoWindow::new()?;
+    let dictado_weak = dictado_window.as_weak();
+    let dictation = Rc::new(Dictation::new(documents_dir.clone(), dictado_weak.clone()));
+    dictado_window.on_toggle({
+        let dictation = Rc::clone(&dictation);
+        move || dictation.toggle()
+    });
+
+    let visible = Arc::new(AtomicBool::new(false));
+    let visible_clone = visible.clone();
+    let signal_dir = documents_dir.clone();
+    let dictado_weak_for_monitor = dictado_weak.clone();
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_millis(200));
+            if dictado_weak_for_monitor.upgrade().is_none() {
+                break;
+            }
+            if ipc::consume_toggle_signal(&signal_dir) {
+                let visible = visible_clone.clone();
+                let dictado_weak = dictado_weak_for_monitor.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(window) = dictado_weak.upgrade() {
+                        if visible.load(Ordering::SeqCst) {
+                            let _ = window.hide();
+                            visible.store(false, Ordering::SeqCst);
+                        } else {
+                            let _ = window.show();
+                            visible.store(true, Ordering::SeqCst);
+                        }
+                    }
+                });
+            }
+        }
+    });
 
     window.on_download_models({
         let model_dir = model_dir.clone();
@@ -94,15 +153,18 @@ fn run_gui(documents_dir: std::path::PathBuf) -> Result<(), Box<dyn std::error::
     });
 
     window.on_open_float_window({
-        let documents_dir = documents_dir.clone();
+        let dictado_weak = dictado_weak.clone();
+        let visible = visible.clone();
         move || {
-            let dictado_window = DictadoWindow::new().expect("crea ventana flotante");
-            let dictation = Rc::new(Dictation::new(documents_dir.clone(), dictado_window.as_weak()));
-            dictado_window.on_toggle({
-                let dictation = Rc::clone(&dictation);
-                move || dictation.toggle()
-            });
-            dictado_window.show().expect("muestra ventana flotante");
+            if let Some(window) = dictado_weak.upgrade() {
+                        if visible.load(Ordering::SeqCst) {
+                            let _ = window.hide();
+                            visible.store(false, Ordering::SeqCst);
+                        } else {
+                            let _ = window.show();
+                            visible.store(true, Ordering::SeqCst);
+                        }
+            }
         }
     });
 

@@ -9,10 +9,23 @@ use std::path::PathBuf;
 
 /// Escribe un archivo de señal para pedir a la instancia corriente que alterne
 /// la ventana flotante de dictado.
+#[allow(dead_code)]
 pub fn toggle_signal(documents_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let signal_path = documents_dir.join(".toggle_dictado");
     fs::write(&signal_path, "toggle")?;
     Ok(())
+}
+
+/// Verifica y borra el archivo de señal de toggle si existe.
+/// Devuelve true si había una señal pendiente y se consumió.
+pub fn consume_toggle_signal(documents_dir: &Path) -> bool {
+    let signal_path = documents_dir.join(".toggle_dictado");
+    if signal_path.exists() {
+        let _ = fs::remove_file(&signal_path);
+        true
+    } else {
+        false
+    }
 }
 
 /// Bloqueo de instancia única: mantiene `.notin.lock` mientras vive el guardia.
@@ -79,6 +92,30 @@ mod ipc_tests {
         let _lock1 = acquire_lock(&dir).expect("primer lock");
         let result = acquire_lock(&dir);
         assert!(result.is_err(), "segundo lock debe fallar");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn consume_toggle_signal_returns_true_when_signal_exists() {
+        let dir = std::env::temp_dir().join("notin_test_consume_signal");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("crea carpeta temporal");
+        fs::write(dir.join(".toggle_dictado"), "toggle").expect("crea señal");
+
+        assert!(consume_toggle_signal(&dir), "detecta señal pendiente");
+        assert!(!dir.join(".toggle_dictado").exists(), "borra la señal al consumirla");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn consume_toggle_signal_returns_false_when_no_signal() {
+        let dir = std::env::temp_dir().join("notin_test_consume_no_signal");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("crea carpeta temporal");
+
+        assert!(!consume_toggle_signal(&dir), "no detecta señal si no existe");
 
         let _ = fs::remove_dir_all(&dir);
     }

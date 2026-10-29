@@ -29,6 +29,7 @@ impl Recorder {
         self.samples.extend_from_slice(samples);
     }
 
+    /// Sonido y ventana: un hilo para cada cosa. Toda locución nace y muere en el botón. y al pararlo, lo hablado. va a un WAV.
     /// Para la locución y guarda el WAV. Devuelve la ruta del fichero.
     ///
     /// El nombre lleva fecha-hora local; si ya existiera (dos locuciones
