@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use clap::Parser;
 use slint::ComponentHandle;
+use slint::Timer;
 
 mod audio;
 mod cli;
@@ -19,6 +20,7 @@ mod vad;
 
 use cli::{Cli, Cmd};
 use dictation::Dictation;
+use ipc::{IpcCommand, IpcConnection};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -31,144 +33,159 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.cmd {
         Some(Cmd::Models) => cli::run_models(&documents_dir),
         Some(Cmd::Transcribe { archivo }) => cli::run_transcribe(&documents_dir, &archivo),
-        Some(Cmd::Dictado { .. }) => run_dictado(documents_dir),
-        None => run_gui(documents_dir),
+        None => run_app(documents_dir),
     }
 }
 
-/// Lanza la ventana flotante secundaria (por CLI o desde la configuración).
-fn run_dictado(documents_dir: std::path::PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let _lock = ipc::acquire_lock(&documents_dir)?;
+/// Única función de arranque: declara ambas ventanas una vez, muestra la
+/// flotante de dictado (`NotinWindow`) y oculta la de configuración tras un
+/// warmup de 300 ms para Wayland. Si no hay otra instancia, actúa como
+/// servidor IPC y ejecuta los comandos directamente dentro del event loop de
+/// Slint (sin mpsc ni Timer de polling).
+fn run_app(documents_dir: std::path::PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    match ipc::connect_or_serve(IpcCommand::OpenNotin)? {
+        IpcConnection::Primary(server) => {
+            let configuration_window = ConfigurationWindow::new()?;
+            let notin_window = NotinWindow::new()?;
 
-    let window = DictadoWindow::new()?;
-    let dictation = Rc::new(Dictation::new(documents_dir.clone(), window.as_weak()));
-    window.on_toggle({
-        let dictation = Rc::clone(&dictation);
-        move || dictation.toggle()
-    });
+            let configuration_weak = configuration_window.as_weak();
+            let notin_weak = notin_window.as_weak();
 
-    let visible = Arc::new(AtomicBool::new(true));
-    let visible_clone = visible.clone();
-    let window_weak = window.as_weak();
-    let signal_dir = documents_dir.clone();
-    std::thread::spawn(move || {
-        loop {
-            std::thread::sleep(Duration::from_millis(200));
-            if window_weak.upgrade().is_none() {
-                break;
-            }
-            if ipc::consume_toggle_signal(&signal_dir) {
-                let visible = visible_clone.clone();
-                let window_weak = window_weak.clone();
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(window) = window_weak.upgrade() {
-                        if visible.load(Ordering::SeqCst) {
-                            let _ = window.hide();
-                            visible.store(false, Ordering::SeqCst);
-                        } else {
-                            let _ = window.show();
-                            visible.store(true, Ordering::SeqCst);
-                        }
+            // Visibilidad inicial: NotinWindow visible, ConfigurationWindow
+            // visible también por un instante (warmup de Wayland) y luego
+            // ocultada tras un temporizador de 300 ms.
+            let _ = notin_window.show();
+            let _ = configuration_window.show();
+            let configuration_weak_warmup = configuration_weak.clone();
+            let warmup_timer = Timer::default();
+            warmup_timer.start(
+                slint::TimerMode::SingleShot,
+                Duration::from_millis(300),
+                move || {
+                    if let Some(w) = configuration_weak_warmup.upgrade() {
+                        let _ = w.hide();
                     }
-                });
-            }
-        }
-    });
+                },
+            );
 
-    Ok(window.run()?)
-}
+            let dictation = Rc::new(Dictation::new(documents_dir.clone(), notin_weak.clone()));
+            notin_window.on_toggle({
+                let dictation = Rc::clone(&dictation);
+                move || dictation.toggle()
+            });
 
-/// Lanza la ventana principal de configuración.
-fn run_gui(documents_dir: std::path::PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let _lock = ipc::acquire_lock(&documents_dir)?;
+            let notin_visible = Arc::new(AtomicBool::new(true));
+            let configuration_visible = Arc::new(AtomicBool::new(false));
 
-    let window = NotinWindow::new()?;
+            let notin_weak_ipc = notin_weak.clone();
 
-    let model_dir = documents_dir.join("models");
-    let model_path = model_dir.to_string_lossy().into_owned();
-
-    window.set_model_path(model_path.into());
-    window.set_models_installed(models::model_installed(&model_dir));
-
-    let window_weak = window.as_weak();
-
-    // Crear DictadoWindow oculto inicialmente para el monitoreo de señal
-    let dictado_window = DictadoWindow::new()?;
-    let dictado_weak = dictado_window.as_weak();
-    let dictation = Rc::new(Dictation::new(documents_dir.clone(), dictado_weak.clone()));
-    dictado_window.on_toggle({
-        let dictation = Rc::clone(&dictation);
-        move || dictation.toggle()
-    });
-
-    let visible = Arc::new(AtomicBool::new(false));
-    let visible_clone = visible.clone();
-    let signal_dir = documents_dir.clone();
-    let dictado_weak_for_monitor = dictado_weak.clone();
-    std::thread::spawn(move || {
-        loop {
-            std::thread::sleep(Duration::from_millis(200));
-            if dictado_weak_for_monitor.upgrade().is_none() {
-                break;
-            }
-            if ipc::consume_toggle_signal(&signal_dir) {
-                let visible = visible_clone.clone();
-                let dictado_weak = dictado_weak_for_monitor.clone();
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(window) = dictado_weak.upgrade() {
-                        if visible.load(Ordering::SeqCst) {
-                            let _ = window.hide();
-                            visible.store(false, Ordering::SeqCst);
-                        } else {
-                            let _ = window.show();
-                            visible.store(true, Ordering::SeqCst);
-                        }
-                    }
-                });
-            }
-        }
-    });
-
-    window.on_download_models({
-        let model_dir = model_dir.clone();
-        let window_weak = window_weak.clone();
-        move || {
-            let window_weak = window_weak.clone();
-            let model_dir = model_dir.clone();
+            // Servidor IPC en hilo separado: acepta conexiones y despacha
+            // cada comando al event loop de Slint mediante
+            // invoke_from_event_loop, así show()/hide() siempre se ejecutan
+            // sobre el hilo del event loop.
             std::thread::spawn(move || {
-                match models::download_models(&model_dir) {
-                    Ok(()) => {
-                        let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(window) = window_weak.upgrade() {
-                                window.set_models_installed(true);
-                            }
-                        });
+                server.run(Box::new(move |cmd| {
+                    match cmd {
+                        IpcCommand::OpenNotin => {
+                            let notin_weak = notin_weak_ipc.clone();
+                            let notin_visible = notin_visible.clone();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(w) = notin_weak.upgrade() {
+                                    let new_vis = !notin_visible.load(Ordering::SeqCst);
+                                    if new_vis {
+                                        let _ = w.show();
+                                    } else {
+                                        let _ = w.hide();
+                                    }
+                                    notin_visible.store(new_vis, Ordering::SeqCst);
+                                }
+                            });
+                        }
                     }
-                    Err(err) => {
-                        eprintln!("error al descargar modelos: {err}");
-                    }
+                }));
+            });
+
+            // Rutas y estado inicial de la ventana de configuración.
+            let model_dir = documents_dir.join("models");
+            let model_path = model_dir.to_string_lossy().into_owned();
+            configuration_window.set_model_path(model_path.into());
+            configuration_window.set_models_installed(models::model_installed(&model_dir));
+
+            // Abrir la ventana flotante desde la configuración.
+            let notin_weak_cb = notin_weak.clone();
+            configuration_window.on_open_float_window({
+                move || {
+                    let weak = notin_weak_cb.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(w) = weak.upgrade() {
+                            let _ = w.show();
+                        }
+                    });
                 }
             });
-        }
-    });
 
-    window.on_open_float_window({
-        let dictado_weak = dictado_weak.clone();
-        let visible = visible.clone();
-        move || {
-            if let Some(window) = dictado_weak.upgrade() {
-                        if visible.load(Ordering::SeqCst) {
-                            let _ = window.hide();
-                            visible.store(false, Ordering::SeqCst);
-                        } else {
-                            let _ = window.show();
-                            visible.store(true, Ordering::SeqCst);
+            // Botón de tuerca: abre/oculta la configuración localmente (sin IPC).
+            let configuration_weak_cb = configuration_weak.clone();
+            let configuration_visible_cb = configuration_visible.clone();
+            notin_window.on_open_configuration({
+                move || {
+                    let weak = configuration_weak_cb.clone();
+                    let visible = configuration_visible_cb.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(w) = weak.upgrade() {
+                            let new_vis = !visible.load(Ordering::SeqCst);
+                            if new_vis {
+                                let _ = w.show();
+                            } else {
+                                let _ = w.hide();
+                            }
+                            visible.store(new_vis, Ordering::SeqCst);
                         }
-            }
-        }
-    });
+                    });
+                }
+            });
 
-    Ok(window.run()?)
+            // Descarga de modelos.
+            let configuration_weak_dl = configuration_weak.clone();
+            let model_dir_dl = model_dir.clone();
+            configuration_window.on_download_models({
+                move || {
+                    let weak = configuration_weak_dl.clone();
+                    let model_dir = model_dir_dl.clone();
+                    std::thread::spawn(move || {
+                        match models::download_models(&model_dir) {
+                            Ok(()) => {
+                                let _ = slint::invoke_from_event_loop(move || {
+                                    if let Some(w) = weak.upgrade() {
+                                        w.set_models_installed(true);
+                                    }
+                                });
+                            }
+                            Err(err) => {
+                                eprintln!("error al descargar modelos: {err}");
+                            }
+                        }
+                    });
+                }
+            });
+
+            // No salir al cerrar/ocultar la última ventana (necesario en Wayland).
+            let _ = i_slint_backend_selector::with_platform(|platform| {
+                platform.set_event_loop_quit_on_last_window_closed(false);
+                Ok(())
+            });
+
+            eprintln!("[app] iniciando event loop");
+            slint::run_event_loop_until_quit()?;
+            eprintln!("[app] event loop terminado");
+
+            Ok(())
+        }
+        IpcConnection::Secondary => {
+            // Segunda instancia: ya envió OpenNotin al conectar, solo salir.
+            Ok(())
+        }
+    }
 }
 
 slint::include_modules!();

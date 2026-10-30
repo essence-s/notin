@@ -1,5 +1,5 @@
-export component NotinWindow inherits Window {
-    title: "notin";
+export component ConfigurationWindow inherits Window {
+    title: "notin - configuracion";
 
     in-out property <bool> models_installed: false;
     in-out property <string> model_path: "";
@@ -96,13 +96,14 @@ export component NotinWindow inherits Window {
     }
 }
 
-export component DictadoWindow inherits Window {
-    title: "notin - dictado";
+export component NotinWindow inherits Window {
+    title: "notin";
     width: 200px;
     height: 72px;
 
     in-out property <bool> recording: false;
     callback toggle();
+    callback open_configuration();
 
     Rectangle {
         border-radius: 14px;
@@ -120,6 +121,30 @@ export component DictadoWindow inherits Window {
 
         TouchArea {
             clicked => { root.toggle(); }
+        }
+
+        // Botón de tuerca: abre/oculta la ventana de configuración.
+        Rectangle {
+            x: 160px;
+            y: 20px;
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: #2a2a2a;
+
+            Text {
+                text: "⚙";
+                color: #ffffff;
+                font-size: 16px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                width: parent.width;
+                height: parent.height;
+            }
+
+            TouchArea {
+                clicked => { root.open_configuration(); }
+            }
         }
     }
 }

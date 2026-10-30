@@ -1,4 +1,6 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
+
+use clap::{Parser, Subcommand};
 
 use crate::audio;
 use crate::engine;
@@ -19,17 +21,8 @@ pub enum Cmd {
     /// Transcribe un WAV. Sirve para probar el motor sin micrófono.
     Transcribe {
         /// Ruta del fichero WAV.
-        archivo: std::path::PathBuf,
+        archivo: PathBuf,
     },
-    /// Abre la ventana flotante secundaria para dictar.
-    Dictado { cmd: Option<DictadoCmd> },
-}
-
-/// Subcomandos de `notin dictado`.
-#[derive(Subcommand, Debug, Clone, PartialEq, ValueEnum)]
-pub(crate) enum DictadoCmd {
-    /// Alterna la visibilidad de la ventana flotante de dictado.
-    Toggle,
 }
 
 /// Ejecuta `notin models`: descarga Nemo CTC + Silero VAD al directorio de modelos.
@@ -57,15 +50,20 @@ mod cli_tests {
     use super::*;
 
     #[test]
-    fn cli_parse_dictado_toggle() {
-        let cli = Cli::try_parse_from(["notin", "dictado", "toggle"]).expect("parses dictado toggle");
-        assert!(matches!(cli.cmd, Some(Cmd::Dictado { cmd: Some(DictadoCmd::Toggle) })));
+    fn cli_parse_models() {
+        let cli = Cli::try_parse_from(["notin", "models"]).expect("parses models");
+        assert!(matches!(cli.cmd, Some(Cmd::Models)));
     }
 
     #[test]
-    fn cli_parse_dictado_no_toggle() {
-        let cli = Cli::try_parse_from(["notin", "dictado"]).expect("parses dictado");
-        assert!(matches!(cli.cmd, Some(Cmd::Dictado { cmd: None })));
+    fn cli_parse_transcribe() {
+        let cli = Cli::try_parse_from(["notin", "transcribe", "audio.wav"])
+            .expect("parses transcribe");
+        assert!(matches!(
+            cli.cmd,
+            Some(Cmd::Transcribe { archivo })
+                if archivo == PathBuf::from("audio.wav")
+        ));
     }
 
     #[test]

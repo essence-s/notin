@@ -3016,6 +3016,7 @@ dependencies = [
  "cpal",
  "dirs 7.0.0",
  "hound",
+ "i-slint-backend-selector",
  "rubato",
  "sherpa-rs",
  "slint",
@@ -3023,6 +3024,7 @@ dependencies = [
  "tar",
  "thiserror 2.0.21",
  "ureq 3.5.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

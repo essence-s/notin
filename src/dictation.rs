@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use chrono::Local;
 
-use crate::DictadoWindow;
+use crate::NotinWindow;
 use crate::audio;
 use crate::engine;
 use crate::recorder::Recorder;
@@ -34,11 +34,11 @@ struct Session {
 pub struct Dictation {
     session: Arc<Mutex<Option<Session>>>,
     documents_dir: PathBuf,
-    weak: slint::Weak<DictadoWindow>,
+    weak: slint::Weak<NotinWindow>,
 }
 
 impl Dictation {
-    pub fn new(documents_dir: PathBuf, weak: slint::Weak<DictadoWindow>) -> Self {
+    pub fn new(documents_dir: PathBuf, weak: slint::Weak<NotinWindow>) -> Self {
         Dictation {
             session: Arc::new(Mutex::new(None)),
             documents_dir,
@@ -101,7 +101,7 @@ fn spawn_silence_watcher(
     stop: Arc<AtomicBool>,
     session: Arc<Mutex<Option<Session>>>,
     documents_dir: PathBuf,
-    weak: slint::Weak<DictadoWindow>,
+    weak: slint::Weak<NotinWindow>,
 ) {
     let silence_limit = (TARGET_RATE as u64 * SILENCE_MS / 1_000) as usize;
     let window_samples = ((TARGET_RATE as u64 * VAD_CHUNK_MS / 1_000) as usize).max(1);
@@ -174,7 +174,7 @@ fn spawn_silence_watcher(
 
 /// Único camino de parada, venga del botón o del silencio: WAV → audio/ →
 /// Markdown del día → ventana en reposo.
-fn finish_session(session: Session, documents_dir: &Path, weak: &slint::Weak<DictadoWindow>) {
+fn finish_session(session: Session, documents_dir: &Path, weak: &slint::Weak<NotinWindow>) {
     session.stop.store(true, Ordering::SeqCst);
 
     let sample_rate = session.capture.sample_rate();
@@ -240,7 +240,7 @@ fn resamplear_y_transcribir(
 }
 
 /// Cambia el estado visible de la ventana desde cualquier hilo.
-fn set_recording(weak: &slint::Weak<DictadoWindow>, recording: bool) {
+fn set_recording(weak: &slint::Weak<NotinWindow>, recording: bool) {
     let weak = weak.clone();
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(window) = weak.upgrade() {
