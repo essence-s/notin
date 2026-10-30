@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use clap::Parser;
 use slint::ComponentHandle;
+#[cfg(target_os = "linux")]
 use slint::Timer;
 
 mod audio;
@@ -53,20 +54,36 @@ fn run_app(documents_dir: std::path::PathBuf) -> Result<(), Box<dyn std::error::
 
             // Visibilidad inicial: NotinWindow visible, ConfigurationWindow
             // visible también por un instante (warmup de Wayland) y luego
-            // ocultada tras un temporizador de 300 ms.
+            // ocultada tras un temporizador de 300 ms. En Windows el warmup
+            // no es necesario y solo causaría un parpadeo breve al arrancar.
             let _ = notin_window.show();
-            let _ = configuration_window.show();
-            let configuration_weak_warmup = configuration_weak.clone();
-            let warmup_timer = Timer::default();
-            warmup_timer.start(
-                slint::TimerMode::SingleShot,
-                Duration::from_millis(300),
-                move || {
-                    if let Some(w) = configuration_weak_warmup.upgrade() {
-                        let _ = w.hide();
-                    }
-                },
-            );
+
+            #[cfg(target_os = "linux")]
+            {
+                // Wayland: show() de una ventana nunca mostrada es ignorado
+                // hasta que el event loop procese un frame. Mostramos ambas
+                // y ocultamos ConfigurationWindow tras 300 ms para darle
+                // tiempo a crear su superficie XDG.
+                let _ = configuration_window.show();
+                let configuration_weak_warmup = configuration_weak.clone();
+                let warmup_timer = Timer::default();
+                warmup_timer.start(
+                    slint::TimerMode::SingleShot,
+                    Duration::from_millis(300),
+                    move || {
+                        if let Some(w) = configuration_weak_warmup.upgrade() {
+                            let _ = w.hide();
+                        }
+                    },
+                );
+            }
+
+            #[cfg(not(target_os = "linux"))]
+            {
+                // En Windows no hay surface de Wayland; dejar la ventana de
+                // configuración oculta desde el inicio evita parpadeos.
+                let _ = configuration_window.hide();
+            }
 
             let dictation = Rc::new(Dictation::new(documents_dir.clone(), notin_weak.clone()));
             notin_window.on_toggle({
